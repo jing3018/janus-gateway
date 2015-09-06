@@ -88,4 +88,16 @@ int janus_get_vp8_pt(const char *sdp);
  * @param[in,out] family The address family of the address, set by the method if valid
  * @returns true if the address is valid, false otherwise */
 gboolean janus_is_ip_valid(const char *ip, int *family);
+
+
+/*! \brief curl escape
+ * @returns true if escape ok
+ */
+const char* janus_url_escape(const char* value);
+
+/*! \brief curl post/get
+ * @returns the content, need to free
+ */
+const char* janus_curl(const char* url, const char* postdata);
+
 #endif

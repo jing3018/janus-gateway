@@ -39,6 +39,8 @@ typedef struct janus_recorder {
 	int video:1;
 	/*! \brief Whether this recorder instance can be used for writing or not */ 
 	int writable:1;
+	/*! \brief Whether this recorder is empty 1, 0*/
+	int empty:1;
 	/*! \brief Mutex to lock/unlock this recorder instance */ 
 	janus_mutex mutex;
 } janus_recorder;

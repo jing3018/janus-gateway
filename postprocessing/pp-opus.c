@@ -69,12 +69,14 @@ int janus_pp_opus_process(FILE *file, janus_pp_frame_packet *list, int *working)
 	long int offset = 0;
 	int bytes = 0, len = 0, steps = 0, last_seq = 0;
 	uint64_t pos = 0;
+	uint64_t last_ts = 0;
 	uint8_t *buffer = calloc(1500, sizeof(uint8_t));
 	while(*working && tmp != NULL) {
 		if(tmp->prev != NULL && (tmp->seq - tmp->prev->seq > 1)) {
 			JANUS_LOG(LOG_WARN, "Lost a packet here? (got seq %"SCNu16" after %"SCNu16", time ~%"SCNu64"s)\n",
 				tmp->seq, tmp->prev->seq, (tmp->ts-list->ts)/48000); 
 		}
+		last_ts = tmp->ts;
 		guint16 diff = tmp->prev == NULL ? 1 : (tmp->seq - tmp->prev->seq);
 		len = 0;
 		/* RTP payload */
@@ -99,6 +101,7 @@ int janus_pp_opus_process(FILE *file, janus_pp_frame_packet *list, int *working)
 		ogg_write();
 		tmp = tmp->next;
 	}
+	JANUS_LOG(LOG_INFO, "ts begin=[%"SCNu64"] ts end=[%"SCNu64"]\nduration=%"SCNu64"\n", list->ts, last_ts, (last_ts - list->ts) * 1000 / 48);
 	return 0;
 }
 

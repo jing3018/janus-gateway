@@ -97,6 +97,7 @@ janus_recorder *janus_recorder_create(const char *dir, int video, const char *fi
 	fwrite(&header_bytes, sizeof(uint16_t), 1, rc->file);
 	fwrite(type, sizeof(char), strlen(type), rc->file);
 	/* Done */
+	rc->empty = 1;
 	rc->writable = 1;
 	janus_mutex_init(&rc->mutex);
 	return rc;
@@ -134,6 +135,7 @@ int janus_recorder_save_frame(janus_recorder *recorder, char *buffer, int length
 		tot -= temp;
 	}
 	/* Done */
+	recorder->empty = 0;
 	janus_mutex_unlock_nodebug(&recorder->mutex);
 	return 0;
 }

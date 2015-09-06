@@ -106,9 +106,11 @@ janus_CFLAGS = \
 	$(JANUS_CFLAGS) \
 	-DPLUGINDIR=\"$(plugindir)\" \
 	-DCONFDIR=\"$(confdir)\" \
+        -I/opt/boringssl/include \
 	$(NULL)
 
 janus_LDADD = \
+        -L/opt/boringssl \
 	$(JANUS_LIBS) \
 	$(JANUS_MANUAL_LIBS) \
 	-lsrtp \

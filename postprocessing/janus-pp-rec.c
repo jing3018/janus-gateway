@@ -106,7 +106,9 @@ int main(int argc, char *argv[])
 		bytes = fread(prebuffer, sizeof(char), 8, file);
 		if(bytes != 8 || prebuffer[0] != 'M') {
 			JANUS_LOG(LOG_ERR, "Invalid header...\n");
-			exit(1);
+			/* janus gateway maybe crash sometimes */
+			/* exit(0); */
+			break;
 		}
 		offset += 8;
 		bytes = fread(&len, sizeof(uint16_t), 1, file);
@@ -165,6 +167,10 @@ int main(int argc, char *argv[])
 		bytes = fread(prebuffer, sizeof(char), 8, file);
 		prebuffer[8] = '\0';
 		JANUS_LOG(LOG_VERB, "Header: %s\n", prebuffer);
+		if(bytes != 8 || prebuffer[0] != 'M') {
+			JANUS_LOG(LOG_ERR, "Invalid header...\n");
+			break;
+		}
 		offset += 8;
 		bytes = fread(&len, sizeof(uint16_t), 1, file);
 		len = ntohs(len);

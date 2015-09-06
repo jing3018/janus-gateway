@@ -109,6 +109,7 @@ int janus_pp_webm_preprocess(FILE *file, janus_pp_frame_packet *list) {
 		return -1;
 	janus_pp_frame_packet *tmp = list;
 	int bytes = 0, min_ts_diff = 0, max_ts_diff = 0;
+	uint64_t last_ts = 0;
 	char prebuffer[1500];
 	memset(prebuffer, 0, 1500);
 	while(tmp) {
@@ -124,6 +125,7 @@ int janus_pp_webm_preprocess(FILE *file, janus_pp_frame_packet *list) {
 				JANUS_LOG(LOG_WARN, "Lost a packet here? (got seq %"SCNu16" after %"SCNu16", time ~%"SCNu64"s)\n",
 					tmp->seq, tmp->prev->seq, (tmp->ts-list->ts)/90000); 
 			}
+			last_ts = tmp->ts;
 			/* http://tools.ietf.org/html/draft-ietf-payload-vp8-04 */
 			/* Read the first bytes of the payload, and get the first octet (VP8 Payload Descriptor) */
 			fseek(file, tmp->offset+12+tmp->skip, SEEK_SET);
@@ -197,6 +199,7 @@ int janus_pp_webm_preprocess(FILE *file, janus_pp_frame_packet *list) {
 		}
 		tmp = tmp->next;
 	}
+	JANUS_LOG(LOG_INFO, "ts begin=[%"SCNu64"] ts end=[%"SCNu64"]\nduration=%"SCNu64"\n", list->ts, last_ts, (last_ts - list->ts) * 1000 /90);
 	int mean_ts = (max_ts_diff+min_ts_diff)/2;	// FIXME;
 	fps = (90000/(mean_ts > 0 ? mean_ts : 30));	// FIXME
 	JANUS_LOG(LOG_INFO, "  -- %dx%d (fps [%d,%d] ~ %d)\n", max_width, max_height, min_ts_diff, max_ts_diff, fps);
