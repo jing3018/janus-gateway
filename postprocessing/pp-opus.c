@@ -70,6 +70,7 @@ int janus_pp_opus_process(FILE *file, janus_pp_frame_packet *list, int *working)
 	long int offset = 0;
 	int bytes = 0, len = 0, steps = 0, last_seq = 0;
 	uint64_t pos = 0;
+	uint64_t last_ts = 0;
 	uint8_t *buffer = g_malloc0(1500);
 	while(*working && tmp != NULL) {
 		if(tmp->prev != NULL && (tmp->seq - tmp->prev->seq > 1)) {
@@ -88,6 +89,7 @@ int janus_pp_opus_process(FILE *file, janus_pp_frame_packet *list, int *working)
 			}
 			g_free(op);
 		}
+		last_ts = tmp->ts;
 		guint16 diff = tmp->prev == NULL ? 1 : (tmp->seq - tmp->prev->seq);
 		len = 0;
 		/* RTP payload */
@@ -114,6 +116,7 @@ int janus_pp_opus_process(FILE *file, janus_pp_frame_packet *list, int *working)
 		tmp = tmp->next;
 	}
 	g_free(buffer);
+	JANUS_LOG(LOG_INFO, "ts begin=[%"SCNu64"] ts end=[%"SCNu64"]\nduration=%"SCNu64"\n", list->ts, last_ts, (last_ts - list->ts) * 1000 / 48);
 	return 0;
 }
 

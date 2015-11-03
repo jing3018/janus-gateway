@@ -24,6 +24,10 @@
 #include "mach_gettime.h"
 #endif
 
+#ifdef HAVE_LIBCURL
+#include <curl/curl.h>
+#endif
+
 gint64 janus_get_monotonic_time(void) {
 	struct timespec ts;
 	clock_gettime (CLOCK_MONOTONIC, &ts);
@@ -304,4 +308,94 @@ char *janus_address_to_ip(struct sockaddr *address) {
 			break;
 	}
 	return addr ? g_strdup(addr) : NULL;
+}
+
+struct memory_buf {
+    char * memory;
+    size_t size;
+};
+
+static size_t curl_callback(void * contents, size_t size,
+                            size_t nmemb, void * userp) {
+    size_t realsize = size * nmemb;
+    struct memory_buf * mem = (struct memory_buf *) userp;
+    
+    mem->memory = realloc(mem->memory, mem->size + realsize + 1);
+    
+    memcpy(&(mem->memory[mem->size]), contents, realsize);
+    mem->size += realsize;
+    mem->memory[mem->size] = 0;
+    return realsize;
+}
+
+const char * janus_curl(const char * url, const char * postdata) {
+#ifndef HAVE_LIBCURL
+    return NULL;
+#else
+    const char * ret = NULL;
+    CURL * curl_handle = NULL;
+    CURLcode curl_ret = CURLE_OK;
+    long http_rescode = 0;
+    struct memory_buf mbuf;
+    
+    mbuf.memory = malloc(1);
+    mbuf.size = 0;
+    
+    curl_handle = curl_easy_init();
+    if (!strncasecmp(url, "https", 5)) {
+        curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0);
+        curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYHOST, 0);
+        curl_easy_setopt(curl_handle, CURLOPT_SSLVERSION,
+                         CURL_SSLVERSION_SSLv3);
+    }
+    curl_easy_setopt(curl_handle, CURLOPT_URL, url);
+    if (postdata) {
+        curl_easy_setopt(curl_handle, CURLOPT_POST, 1);
+        curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDSIZE, strlen(postdata));
+        curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDS, postdata);
+    }
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, curl_callback);
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&mbuf);
+    curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 3L);
+    curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "Janus/1.0");
+    
+    curl_ret = curl_easy_perform(curl_handle);
+    if (curl_ret != CURLE_OK) {
+        JANUS_LOG(LOG_ERR, "curl failed, url[%s]postdata[%s]\n",url, postdata);
+        ret = NULL;
+        goto end;
+    }
+    
+    curl_easy_getinfo(curl_handle, CURLINFO_RESPONSE_CODE, &http_rescode);
+    if (http_rescode != 200) {
+        JANUS_LOG(LOG_ERR, "curl failed, url[%s]postdata[%s]\n",url, postdata);
+        ret = NULL;
+        goto end;
+    }
+    
+    ret = mbuf.memory;
+    
+end:
+    curl_easy_cleanup(curl_handle);
+    
+    /* 出错时，释放内存 */
+    if (!ret && mbuf.memory) {
+        free(mbuf.memory);
+    }
+    return ret;
+#endif
+}
+
+const char* janus_url_escape(const char* value) {
+#ifndef HAVE_LIBCURL
+    return NULL;
+#else
+    CURL * curl_handle = NULL;
+    curl_handle = curl_easy_init();
+    char *escape_str = curl_easy_escape(curl_handle, value, strlen(value));
+    char *ret = strdup(escape_str);
+    curl_free(escape_str);
+    curl_easy_cleanup(curl_handle);
+    return ret;
+#endif
 }

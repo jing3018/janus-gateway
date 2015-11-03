@@ -100,4 +100,15 @@ gboolean janus_is_ip_valid(const char *ip, int *family);
  * @param address The sockaddr address to convert
  * @returns A string containing the IP address, if successful, NULL otherwise */
 char *janus_address_to_ip(struct sockaddr *address);
+
+/*! \brief curl escape
+ * @returns true if escape ok
+ */
+const char* janus_url_escape(const char* value);
+
+/*! \brief curl post/get
+ * @returns the content, need to free
+ */
+const char* janus_curl(const char* url, const char* postdata);
+
 #endif
