@@ -10,6 +10,15 @@
 ; record = true|false (whether this room should be recorded, default=false)
 ; rec_dir = <folder where recordings should be stored, when enabled>
 
+;auto create and destory room when participant join and leave
+[auto]
+secret = adminpwd
+publishers = 8
+bitrate = 1024000
+fir_freq = 10
+record = true
+rec_dir = /opt/janus/recordings
+
 [1234]
 description = Demo Room
 secret = adminpwd

@@ -260,6 +260,7 @@ typedef struct janus_videoroom {
 static GHashTable *rooms;
 static janus_mutex rooms_mutex;
 static GList *old_rooms;
+static janus_videoroom *room_tpl;
 static void janus_videoroom_free(janus_videoroom *room);
 
 typedef struct janus_videoroom_session {
@@ -547,6 +548,8 @@ int janus_videoroom_init(janus_callbacks *callback, const char *config_path) {
 		return -1;
 	}
 
+	room_tpl = NULL;
+
 	/* Read configuration */
 	char filename[255];
 	g_snprintf(filename, 255, "%s/%s.cfg", config_path, JANUS_VIDEOROOM_PACKAGE);
@@ -633,9 +636,13 @@ int janus_videoroom_init(janus_callbacks *callback, const char *config_path) {
 			videoroom->destroyed = 0;
 			janus_mutex_init(&videoroom->participants_mutex);
 			videoroom->participants = g_hash_table_new(NULL, NULL);
-			janus_mutex_lock(&rooms_mutex);
-			g_hash_table_insert(rooms, GUINT_TO_POINTER(videoroom->room_id), videoroom);
-			janus_mutex_unlock(&rooms_mutex);
+			if(janus_strcmp_const_time(cat->name, "auto")) {
+				room_tpl = videoroom;
+			} else {
+				janus_mutex_lock(&rooms_mutex);
+				g_hash_table_insert(rooms, GUINT_TO_POINTER(videoroom->room_id), videoroom);
+				janus_mutex_unlock(&rooms_mutex);
+			}
 			JANUS_LOG(LOG_VERB, "Created videoroom: %"SCNu64" (%s, %s, secret: %s, pin: %s)\n",
 				videoroom->room_id, videoroom->room_name,
 				videoroom->is_private ? "private" : "public",
@@ -2249,6 +2256,30 @@ static void *janus_videoroom_handler(void *data) {
 			guint64 room_id = json_integer_value(room);
 			janus_mutex_lock(&rooms_mutex);
 			janus_videoroom *videoroom = g_hash_table_lookup(rooms, GUINT_TO_POINTER(room_id));
+			/* create room automatically */
+			if(room_tpl && videoroom == NULL) {
+                JANUS_LOG(LOG_INFO, "Automatically create room (%"SCNu64")\n", room_id);
+				videoroom = g_malloc0(sizeof(janus_videoroom));
+				char *description = g_strdup(room_tpl->room_name);
+				if(videoroom == NULL || description == NULL) {
+					JANUS_LOG(LOG_FATAL, "Create Room, Memory error!\n");
+				} else {
+					videoroom->room_id        = room_id;
+					videoroom->room_name      = description;
+					videoroom->room_secret    = g_strdup(room_tpl->room_secret);
+					videoroom->room_pin       = g_strdup(room_tpl->room_pin);
+					videoroom->is_private     = room_tpl->is_private;
+					videoroom->max_publishers = room_tpl->max_publishers;
+					videoroom->bitrate        = room_tpl->bitrate;
+					videoroom->fir_freq       = room_tpl->fir_freq;
+					videoroom->record         = room_tpl->record;
+					videoroom->rec_dir        = g_strdup(room_tpl->rec_dir);
+					videoroom->destroyed      = 0;
+					janus_mutex_init(&videoroom->participants_mutex);
+					videoroom->participants = g_hash_table_new(NULL, NULL);
+					g_hash_table_insert(rooms, GUINT_TO_POINTER(videoroom->room_id), videoroom);
+				}
+			}
 			if(videoroom == NULL) {
 				janus_mutex_unlock(&rooms_mutex);
 				JANUS_LOG(LOG_ERR, "No such room (%"SCNu64")\n", room_id);
