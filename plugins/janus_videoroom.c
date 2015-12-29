@@ -221,9 +221,10 @@ typedef struct janus_videoroom_message {
 	char *sdp;
 } janus_videoroom_message;
 static GAsyncQueue *messages = NULL;
+static janus_videoroom_message exit_message;
 
 static void janus_videoroom_message_free(janus_videoroom_message *msg) {
-	if(!msg)
+	if(!msg || msg == &exit_message)
 		return;
 
 	msg->handle = NULL;
@@ -694,6 +695,8 @@ void janus_videoroom_destroy(void) {
 	if(!g_atomic_int_get(&initialized))
 		return;
 	g_atomic_int_set(&stopping, 1);
+
+	g_async_queue_push(messages, &exit_message);
 	if(handler_thread != NULL) {
 		g_thread_join(handler_thread);
 		handler_thread = NULL;
@@ -2162,7 +2165,7 @@ void janus_videoroom_hangup_media(janus_plugin_session *handle) {
 				janus_videoroom_participant *publisher = l->feed;
 				if(publisher != NULL) {
 					janus_mutex_lock(&publisher->listeners_mutex);
-					publisher->listeners = g_slist_remove(publisher->listeners, listener);
+					publisher->listeners = g_slist_remove(publisher->listeners, l);
 					janus_mutex_unlock(&publisher->listeners_mutex);
 					l->feed = NULL;
 				}
@@ -2186,8 +2189,13 @@ static void *janus_videoroom_handler(void *data) {
 	}
 	json_t *root = NULL;
 	while(g_atomic_int_get(&initialized) && !g_atomic_int_get(&stopping)) {
-		if(!messages || (msg = g_async_queue_try_pop(messages)) == NULL) {
-			usleep(50000);
+		msg = g_async_queue_pop(messages);
+		if(msg == NULL)
+			continue;
+		if(msg == &exit_message)
+			break;
+		if(msg->handle == NULL) {
+			janus_videoroom_message_free(msg);
 			continue;
 		}
 		janus_videoroom_session *session = NULL;
@@ -3712,6 +3720,7 @@ int janus_videoroom_muxed_unsubscribe(janus_videoroom_listener_muxed *muxed_list
 				listener->feed = NULL;
 				muxed_listener->listeners = g_slist_remove(muxed_listener->listeners, listener);
 				JANUS_LOG(LOG_VERB, "Now subscribed to %d feeds\n", g_slist_length(muxed_listener->listeners));
+				janus_videoroom_listener_free(listener);
 				/* Add to feeds in the answer */
 				removed_feeds++;
 				json_t *f = json_object();
@@ -3946,6 +3955,15 @@ static void janus_videoroom_listener_free(janus_videoroom_listener *l) {
 
 static void janus_videoroom_muxed_listener_free(janus_videoroom_listener_muxed *l) {
 	JANUS_LOG(LOG_VERB, "Freeing muxed-listener\n");
+	GSList *ls = l->listeners;
+	while(ls) {
+		janus_videoroom_listener *listener = (janus_videoroom_listener *)ls->data;
+		if(listener) {
+			janus_videoroom_listener_free(listener);
+		}
+		ls = ls->next;
+	}
+	g_slist_free(l->listeners);
 	g_free(l);
 }
 

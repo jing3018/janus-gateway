@@ -2833,24 +2833,6 @@ void janus_plugin_close_pc(janus_plugin_session *plugin_session) {
 	JANUS_LOG(LOG_VERB, "[%"SCNu64"] Plugin asked to hangup PeerConnection: sending alert\n", ice_handle->handle_id);
 	/* Send an alert on all the DTLS connections */
 	janus_ice_webrtc_hangup(ice_handle);
-	/* Get rid of the PeerConnection */
-	if(ice_handle->iceloop) {
-		gint64 waited = 0;
-		while(ice_handle->iceloop && !g_main_loop_is_running(ice_handle->iceloop)) {
-			JANUS_LOG(LOG_VERB, "[%"SCNu64"] ICE loop exists but is not running, waiting for it to run\n", ice_handle->handle_id);
-			g_usleep (100000);
-			waited += 100000;
-			if(waited >= G_USEC_PER_SEC) {
-				JANUS_LOG(LOG_VERB, "[%"SCNu64"]   -- Waited a second, that's enough!\n", ice_handle->handle_id);
-				break;
-			}
-		}
-		if(ice_handle->iceloop && g_main_loop_is_running(ice_handle->iceloop)) {
-			JANUS_LOG(LOG_VERB, "[%"SCNu64"] Forcing ICE loop to quit (%s)\n", ice_handle->handle_id, g_main_loop_is_running(ice_handle->iceloop) ? "running" : "NOT running");
-			g_main_loop_quit(ice_handle->iceloop);
-			g_main_context_wakeup(ice_handle->icectx);
-		}
-	}
 }
 
 void janus_plugin_end_session(janus_plugin_session *plugin_session) {
@@ -3009,15 +2991,11 @@ gint main(int argc, char *argv[])
 			g_print("Error changing the current working directory!\n");
 			exit(1);
 		}
-
-		/* Close out the standard file descriptors */
-		close(STDIN_FILENO);
-		close(STDOUT_FILENO);
-		close(STDERR_FILENO);
+		/* We close stdin/stdout/stderr when initializing the logger */
 	}
 
 	/* Initialize logger */
-	if(janus_log_init(use_stdout, logfile) < 0)
+	if(janus_log_init(daemonize, use_stdout, logfile) < 0)
 		exit(1);
 
 	JANUS_PRINT("---------------------------------------------------\n");
@@ -3277,6 +3255,7 @@ gint main(int argc, char *argv[])
 	uint16_t stun_port = 0, turn_port = 0;
 	char *turn_type = NULL, *turn_user = NULL, *turn_pwd = NULL;
 	char *turn_rest_api = NULL, *turn_rest_api_key = NULL;
+	const char *nat_1_1_mapping = NULL;
 	uint16_t rtp_min_port = 0, rtp_max_port = 0;
 	gboolean ice_lite = FALSE, ice_tcp = FALSE, ipv6 = FALSE;
 	item = janus_config_get_item_drilldown(config, "media", "ipv6");
@@ -3319,6 +3298,7 @@ gint main(int argc, char *argv[])
 	item = janus_config_get_item_drilldown(config, "nat", "nat_1_1_mapping");
 	if(item && item->value) {
 		JANUS_LOG(LOG_VERB, "Using nat_1_1_mapping for public ip - %s\n", item->value);
+		nat_1_1_mapping = item->value;
 		janus_set_public_ip(item->value);
 		janus_ice_enable_nat_1_1();
 	}
@@ -3373,10 +3353,11 @@ gint main(int argc, char *argv[])
 	if(stun_server == NULL && turn_server == NULL) {
 		/* No STUN and TURN server provided for Janus: make sure it isn't on a private address */
 		gboolean private_address = FALSE;
+		const char *test_ip = nat_1_1_mapping ? nat_1_1_mapping : local_ip;
 		struct sockaddr_in addr;
-		if(inet_pton(AF_INET, local_ip, &addr) > 0) {
+		if(inet_pton(AF_INET, test_ip, &addr) > 0) {
 			unsigned short int ip[4];
-			sscanf(local_ip, "%hu.%hu.%hu.%hu", &ip[0], &ip[1], &ip[2], &ip[3]);
+			sscanf(test_ip, "%hu.%hu.%hu.%hu", &ip[0], &ip[1], &ip[2], &ip[3]);
 			if(ip[0] == 10) {
 				/* Class A private address */
 				private_address = TRUE;
@@ -3389,7 +3370,8 @@ gint main(int argc, char *argv[])
 			}
 		}
 		if(private_address) {
-			JANUS_LOG(LOG_WARN, "Janus is deployed on a private address (%s) but you didn't specify any STUN server! Expect trouble if this is supposed to work over the internet and not just in a LAN...\n", local_ip);
+			JANUS_LOG(LOG_WARN, "Janus is deployed on a private address (%s) but you didn't specify any STUN server!"
+			                    " Expect trouble if this is supposed to work over the internet and not just in a LAN...\n", test_ip);
 		}
 	}
 	/* Are we going to force BUNDLE and/or rtcp-mux? */
@@ -3580,7 +3562,7 @@ gint main(int argc, char *argv[])
 	item = janus_config_get_item_drilldown(config, "general", "transports_folder");
 	if(item && item->value)
 		path = (char *)item->value;
-	JANUS_LOG(LOG_INFO, "Transpor plugins folder: %s\n", path);
+	JANUS_LOG(LOG_INFO, "Transport plugins folder: %s\n", path);
 	dir = opendir(path);
 	if(!dir) {
 		JANUS_LOG(LOG_FATAL, "\tCouldn't access transport plugins folder...\n");

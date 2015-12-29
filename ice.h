@@ -146,8 +146,6 @@ typedef struct janus_ice_handle janus_ice_handle;
 typedef struct janus_ice_stream janus_ice_stream;
 /*! \brief Janus ICE component */
 typedef struct janus_ice_component janus_ice_component;
-/*! \brief Janus enqueued (S)RTP/(S)RTCP packet to send */
-typedef struct janus_ice_queued_packet janus_ice_queued_packet;
 /*! \brief Helper to handle pending trickle candidates (e.g., when we're still waiting for an offer) */
 typedef struct janus_ice_trickle janus_ice_trickle;
 
@@ -401,7 +399,7 @@ struct janus_ice_component {
 };
 
 /*! \brief Helper to handle pending trickle candidates (e.g., when we're still waiting for an offer) */
-typedef struct janus_ice_trickle {
+struct janus_ice_trickle {
 	/*! \brief Janus ICE handle this trickle candidate belongs to */
 	janus_ice_handle *handle;
 	/*! \brief Monotonic time of when this trickle candidate has been received */
@@ -410,7 +408,7 @@ typedef struct janus_ice_trickle {
 	char *transaction;
 	/*! \brief JSON object of the trickle candidate(s) */
 	json_t *candidate;
-} janus_ice_trickle;
+};
 
 /** @name Janus ICE trickle candidates methods
  */
@@ -432,24 +430,6 @@ gint janus_ice_trickle_parse(janus_ice_handle *handle, json_t *candidate, const 
 void janus_ice_trickle_destroy(janus_ice_trickle *trickle);
 ///@}
 
-
-
-#define JANUS_ICE_PACKET_AUDIO	0
-#define JANUS_ICE_PACKET_VIDEO	1
-#define JANUS_ICE_PACKET_DATA	2
-/*! \brief Janus enqueued (S)RTP/(S)RTCP packet to send */
-struct janus_ice_queued_packet {
-	/*! \brief Packet data */
-	char *data;
-	/*! \brief Packet length */
-	gint length;
-	/*! \brief Type of data (audio/video/data, or RTCP related to any of them) */
-	gint type;
-	/*! \brief Whether this is an RTCP message or not */
-	gboolean control;
-	/*! \brief Whether the data is already encrypted or not */
-	gboolean encrypted;
-};
 
 /** @name Janus ICE handle methods
  */
