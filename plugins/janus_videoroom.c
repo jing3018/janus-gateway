@@ -219,11 +219,13 @@ typedef struct janus_videoroom_message {
 	json_t *message;
 	char *sdp_type;
 	char *sdp;
+	gint64 incoming_time;
 } janus_videoroom_message;
 static GAsyncQueue *messages = NULL;
+static janus_videoroom_message exit_message;
 
 static void janus_videoroom_message_free(janus_videoroom_message *msg) {
-	if(!msg)
+	if(!msg || msg == &exit_message)
 		return;
 
 	msg->handle = NULL;
@@ -260,6 +262,7 @@ typedef struct janus_videoroom {
 static GHashTable *rooms;
 static janus_mutex rooms_mutex;
 static GList *old_rooms;
+static janus_videoroom *room_tpl;
 static void janus_videoroom_free(janus_videoroom *room);
 
 typedef struct janus_videoroom_session {
@@ -547,6 +550,8 @@ int janus_videoroom_init(janus_callbacks *callback, const char *config_path) {
 		return -1;
 	}
 
+	room_tpl = NULL;
+
 	/* Read configuration */
 	char filename[255];
 	g_snprintf(filename, 255, "%s/%s.cfg", config_path, JANUS_VIDEOROOM_PACKAGE);
@@ -633,9 +638,13 @@ int janus_videoroom_init(janus_callbacks *callback, const char *config_path) {
 			videoroom->destroyed = 0;
 			janus_mutex_init(&videoroom->participants_mutex);
 			videoroom->participants = g_hash_table_new(NULL, NULL);
-			janus_mutex_lock(&rooms_mutex);
-			g_hash_table_insert(rooms, GUINT_TO_POINTER(videoroom->room_id), videoroom);
-			janus_mutex_unlock(&rooms_mutex);
+			if(janus_strcmp_const_time(cat->name, "auto")) {
+				room_tpl = videoroom;
+			} else {
+				janus_mutex_lock(&rooms_mutex);
+				g_hash_table_insert(rooms, GUINT_TO_POINTER(videoroom->room_id), videoroom);
+				janus_mutex_unlock(&rooms_mutex);
+			}
 			JANUS_LOG(LOG_VERB, "Created videoroom: %"SCNu64" (%s, %s, secret: %s, pin: %s)\n",
 				videoroom->room_id, videoroom->room_name,
 				videoroom->is_private ? "private" : "public",
@@ -687,6 +696,8 @@ void janus_videoroom_destroy(void) {
 	if(!g_atomic_int_get(&initialized))
 		return;
 	g_atomic_int_set(&stopping, 1);
+
+	g_async_queue_push(messages, &exit_message);
 	if(handler_thread != NULL) {
 		g_thread_join(handler_thread);
 		handler_thread = NULL;
@@ -712,6 +723,9 @@ void janus_videoroom_destroy(void) {
 	rooms = NULL;
 	janus_mutex_unlock(&rooms_mutex);
 	janus_mutex_destroy(&rooms_mutex);
+
+	janus_videoroom_free(room_tpl);
+	room_tpl = NULL;
 
 	g_async_queue_unref(messages);
 	messages = NULL;
@@ -1716,6 +1730,7 @@ struct janus_plugin_result *janus_videoroom_handle_message(janus_plugin_session 
 		msg->message = root;
 		msg->sdp_type = sdp_type;
 		msg->sdp = sdp;
+		msg->incoming_time = janus_get_monotonic_time();
 		g_async_queue_push(messages, msg);
 
 		return janus_plugin_result_new(JANUS_PLUGIN_OK_WAIT, NULL);
@@ -2155,7 +2170,7 @@ void janus_videoroom_hangup_media(janus_plugin_session *handle) {
 				janus_videoroom_participant *publisher = l->feed;
 				if(publisher != NULL) {
 					janus_mutex_lock(&publisher->listeners_mutex);
-					publisher->listeners = g_slist_remove(publisher->listeners, listener);
+					publisher->listeners = g_slist_remove(publisher->listeners, l);
 					janus_mutex_unlock(&publisher->listeners_mutex);
 					l->feed = NULL;
 				}
@@ -2179,15 +2194,25 @@ static void *janus_videoroom_handler(void *data) {
 	}
 	json_t *root = NULL;
 	while(g_atomic_int_get(&initialized) && !g_atomic_int_get(&stopping)) {
-		if(!messages || (msg = g_async_queue_try_pop(messages)) == NULL) {
-			usleep(50000);
+		msg = g_async_queue_pop(messages);
+		if(msg == NULL)
 			continue;
+		if(msg == &exit_message)
+			break;
+		if(msg->handle == NULL) {
+			janus_videoroom_message_free(msg);
+			continue;
+		}
+		int queue_time = janus_get_monotonic_time() - msg->incoming_time;
+		if(queue_time >= 3*G_USEC_PER_SEC) {
+			JANUS_LOG(LOG_ERR, "MESSAGE IN QUEUE [%d]us BEFORE PROCESS\n", queue_time);
 		}
 		janus_videoroom_session *session = NULL;
 		janus_mutex_lock(&sessions_mutex);
-		if(g_hash_table_lookup(sessions, msg->handle) != NULL ) {
-			session = (janus_videoroom_session *)msg->handle->plugin_handle;
-		}
+		//if(g_hash_table_lookup(sessions, msg->handle) != NULL ) {
+		//	session = (janus_videoroom_session *)msg->handle->plugin_handle;
+		//}
+		session = g_hash_table_lookup(sessions, msg->handle);
 		janus_mutex_unlock(&sessions_mutex);
 		if(!session) {
 			JANUS_LOG(LOG_ERR, "No session associated with this handle...\n");
@@ -2249,6 +2274,30 @@ static void *janus_videoroom_handler(void *data) {
 			guint64 room_id = json_integer_value(room);
 			janus_mutex_lock(&rooms_mutex);
 			janus_videoroom *videoroom = g_hash_table_lookup(rooms, GUINT_TO_POINTER(room_id));
+			/* create room automatically */
+			if(room_tpl && videoroom == NULL) {
+                JANUS_LOG(LOG_INFO, "Automatically create room (%"SCNu64")\n", room_id);
+				videoroom = g_malloc0(sizeof(janus_videoroom));
+				char *description = g_strdup(room_tpl->room_name);
+				if(videoroom == NULL || description == NULL) {
+					JANUS_LOG(LOG_FATAL, "Create Room, Memory error!\n");
+				} else {
+					videoroom->room_id        = room_id;
+					videoroom->room_name      = description;
+					videoroom->room_secret    = g_strdup(room_tpl->room_secret);
+					videoroom->room_pin       = g_strdup(room_tpl->room_pin);
+					videoroom->is_private     = room_tpl->is_private;
+					videoroom->max_publishers = room_tpl->max_publishers;
+					videoroom->bitrate        = room_tpl->bitrate;
+					videoroom->fir_freq       = room_tpl->fir_freq;
+					videoroom->record         = room_tpl->record;
+					videoroom->rec_dir        = g_strdup(room_tpl->rec_dir);
+					videoroom->destroyed      = 0;
+					janus_mutex_init(&videoroom->participants_mutex);
+					videoroom->participants = g_hash_table_new(NULL, NULL);
+					g_hash_table_insert(rooms, GUINT_TO_POINTER(videoroom->room_id), videoroom);
+				}
+			}
 			if(videoroom == NULL) {
 				janus_mutex_unlock(&rooms_mutex);
 				JANUS_LOG(LOG_ERR, "No such room (%"SCNu64")\n", room_id);
@@ -3681,6 +3730,7 @@ int janus_videoroom_muxed_unsubscribe(janus_videoroom_listener_muxed *muxed_list
 				listener->feed = NULL;
 				muxed_listener->listeners = g_slist_remove(muxed_listener->listeners, listener);
 				JANUS_LOG(LOG_VERB, "Now subscribed to %d feeds\n", g_slist_length(muxed_listener->listeners));
+				janus_videoroom_listener_free(listener);
 				/* Add to feeds in the answer */
 				removed_feeds++;
 				json_t *f = json_object();
@@ -3915,6 +3965,15 @@ static void janus_videoroom_listener_free(janus_videoroom_listener *l) {
 
 static void janus_videoroom_muxed_listener_free(janus_videoroom_listener_muxed *l) {
 	JANUS_LOG(LOG_VERB, "Freeing muxed-listener\n");
+	GSList *ls = l->listeners;
+	while(ls) {
+		janus_videoroom_listener *listener = (janus_videoroom_listener *)ls->data;
+		if(listener) {
+			janus_videoroom_listener_free(listener);
+		}
+		ls = ls->next;
+	}
+	g_slist_free(l->listeners);
 	g_free(l);
 }
 
